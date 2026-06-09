@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { font-family: -apple-system, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; background: #f5f5f5; }
+.tweet { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); white-space: pre-wrap; font-size: 15px; line-height: 1.5; }
+button { margin-top: 16px; padding: 10px 20px; background: #1d9bf0; color: white; border: none; border-radius: 20px; font-size: 14px; cursor: pointer; }
+button:hover { background: #1a8cd8; }
+.copied { background: #00ba7c; }
+</style>
+</head>
+<body>
+<div class="tweet" id="tweet">/last30days v2.9 is out. Reddit just got a massive upgrade.
+
+Top comments are now first-class. The best comment on each thread gets 10% scoring weight and shows up like:
+
+r/ClaudeAI — "Anthropic Released 32 Page Detailed Guide on Building Claude Skills" [1,470pts, 112 comments]
+💬 Top comment (567 pts): "Can't wait to have Claude read this and explain it to me."
+
+Reddit's value was always in the comments. Now the skill actually reads them.
+
+The other big change: smart subreddit discovery. It scores every candidate by frequency × recency × topic-word match and blocklists utility subs that used to pollute results.
+
+Before: search "Kanye West" → r/AskReddit, r/OutOfTheLoop
+Now: r/hiphopheads, r/Kanye, r/NFCWestMemeWar
+
+Shoutout to @ScrapeCreators — one API key now covers Reddit, TikTok, and Instagram. Three sources, one key. Should be cheaper than using an OpenAI key too.</div>
+<button onclick="copyTweet()">Copy to clipboard</button>
+<script>
+function copyTweet() {
+  const text = document.getElementById('tweet').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector('button');
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy to clipboard'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+</script>
+</body>
+</html>
