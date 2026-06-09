@@ -1,8 +1,4 @@
-import sys
 import unittest
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills" / "last30days" / "scripts"))
 
 from lib.tiktok import _parse_items
 
@@ -154,14 +150,7 @@ class TestTikTokEnrichWithComments(unittest.TestCase):
             "total": 3,
         }
 
-        class FakeResp:
-            def raise_for_status(self):
-                pass
-            def json(self):
-                return fake_sc_response
-
-        with patch.object(tiktok, "_requests") as mock_req:
-            mock_req.get.return_value = FakeResp()
+        with patch.object(tiktok.http, "get", return_value=fake_sc_response):
             out = tiktok._fetch_post_comments(
                 "https://www.tiktok.com/@u/video/1",
                 token="k",
@@ -192,14 +181,7 @@ class TestTikTokEnrichWithComments(unittest.TestCase):
             "total": 3,
         }
 
-        class FakeResp:
-            def raise_for_status(self):
-                pass
-            def json(self):
-                return fake_sc_response
-
-        with patch.object(tiktok, "_requests") as mock_req:
-            mock_req.get.return_value = FakeResp()
+        with patch.object(tiktok.http, "get", return_value=fake_sc_response):
             out = tiktok._fetch_post_comments(
                 "https://www.tiktok.com/@u/video/1",
                 token="k",
@@ -217,8 +199,7 @@ class TestTikTokEnrichWithComments(unittest.TestCase):
         from unittest.mock import patch
         from lib import tiktok
 
-        with patch.object(tiktok, "_requests") as mock_req:
-            mock_req.get.side_effect = Exception("429 rate limit")
+        with patch.object(tiktok.http, "get", side_effect=Exception("429 rate limit")):
             out = tiktok._fetch_post_comments(
                 "https://www.tiktok.com/@u/video/1",
                 token="k",
@@ -248,7 +229,6 @@ class TestTikTokEnrichWithComments(unittest.TestCase):
         self.assertIn("top_comments", by_id["high"])
         self.assertIn("top_comments", by_id["mid"])
         self.assertNotIn("top_comments", by_id["low"])
-
 
 if __name__ == "__main__":
     unittest.main()

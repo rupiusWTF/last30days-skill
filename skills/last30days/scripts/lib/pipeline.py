@@ -15,6 +15,7 @@ from . import (
     bluesky,
     dates,
     dedupe,
+    digg,
     entity_extract,
     env,
     github,
@@ -78,7 +79,10 @@ MOCK_AVAILABLE_SOURCES = [
     "xiaohongshu",
     "github",
     "perplexity",
+    "threads",
+    "pinterest",
     "xquik",
+    "digg",
 ]
 
 
@@ -106,6 +110,8 @@ def available_sources(config: dict[str, Any], requested_sources: list[str] | Non
     available.extend(["hackernews", "polymarket"])
     if config.get("GITHUB_TOKEN") or which("gh"):
         available.append("github")
+    if which("digg-pp-cli"):
+        available.append("digg")
     if env.is_bluesky_available(config):
         available.append("bluesky")
     if env.is_truthsocial_available(config):
@@ -114,7 +120,9 @@ def available_sources(config: dict[str, Any], requested_sources: list[str] | Non
         available.append("grounding")
     # Perplexity Sonar: opt-in additive source via INCLUDE_SOURCES=perplexity
     include_sources = (config.get("INCLUDE_SOURCES") or "").lower().split(",")
-    if config.get("OPENROUTER_API_KEY") and "perplexity" in include_sources:
+    if config.get("OPENROUTER_API_KEY") and (
+        "perplexity" in include_sources or (requested_sources and "perplexity" in requested_sources)
+    ):
         available.append("perplexity")
     if requested_sources and "xiaohongshu" in requested_sources and env.is_xiaohongshu_available(config):
         available.append("xiaohongshu")
@@ -124,6 +132,9 @@ def available_sources(config: dict[str, Any], requested_sources: list[str] | Non
         available.append("pinterest")
     if env.is_xquik_available(config):
         available.append("xquik")
+    exclude = {s.strip().lower() for s in (config.get("EXCLUDE_SOURCES") or "").split(",") if s.strip()}
+    if exclude:
+        available = [s for s in available if s not in exclude]
     return available
 
 
@@ -196,7 +207,7 @@ def run(
             available = [source for source in available if source in requested_sources]
     if web_backend == "none":
         available = [s for s in available if s != "grounding"]
-    elif web_backend in ("brave", "exa", "serper") and "grounding" not in available:
+    elif web_backend in ("brave", "exa", "serper", "parallel") and "grounding" not in available:
         available.append("grounding")
     if not available:
         raise RuntimeError("No sources are available for this run.")
@@ -531,6 +542,12 @@ def _finalize_items_by_source(
             keywords = config.get("_polymarket_keywords") if isinstance(config, dict) else None
             if keywords:
                 items = polymarket.filter_items_against_keywords(items, keywords)
+        if source == "digg" and items:
+            # Pull top-ranked X posts only for the survivors that will appear
+            # in the brief. Spending the enrichment budget here (rather than
+            # at retrieval time) keeps the inline 'via Digg' quotes
+            # paired with the clusters dedupe actually kept.
+            digg.enrich_source_items(items, top_k=3)
         finalized[source] = items
     return finalized
 
@@ -966,6 +983,13 @@ def _retrieve_stream(
     if source == "hackernews":
         result = hackernews.search_hackernews(subquery.search_query, from_date, to_date, depth=depth)
         return hackernews.parse_hackernews_response(result, query=subquery.search_query), {}
+    if source == "digg":
+        result = digg.search_digg(subquery.search_query, from_date, to_date, depth=depth)
+        items = digg.parse_digg_response(result, query=subquery.search_query)
+        # Enrichment with attached X posts is deferred to
+        # _finalize_items_by_source so it runs on the items that actually
+        # survive dedupe rather than on top-K of the raw fanout.
+        return items, {}
     if source == "bluesky":
         result = bluesky.search_bluesky(subquery.search_query, from_date, to_date, depth=depth, config=config)
         return bluesky.parse_bluesky_response(result), {}
@@ -983,8 +1007,14 @@ def _retrieve_stream(
         result = polymarket.search_polymarket(subquery.search_query, from_date, to_date, depth=depth)
         return polymarket.parse_polymarket_response(result, topic=subquery.search_query), {}
     if source == "github":
-        result = github.search_github(subquery.search_query, from_date, to_date, depth=depth, token=config.get("GITHUB_TOKEN"))
-        return result, {}
+        # Resolve once at the pipeline boundary so search and enrich
+        # share the result; otherwise each call would re-run the env
+        # lookup and gh-CLI subprocess fallback (up to 5s timeout each).
+        token = github.resolve_token(config.get("GITHUB_TOKEN"))
+        response = github.search_github(subquery.search_query, from_date, to_date, depth=depth, token=token)
+        items = github.parse_github_response(response)
+        items = github.enrich_with_comments(items, depth=depth, token=token)
+        return items, {}
     if source == "pinterest":
         result = pinterest.search_pinterest(
             subquery.search_query, from_date, to_date,
@@ -1057,6 +1087,45 @@ def _mock_stream_results(source: str, subquery: schema.SubQuery) -> tuple[list[d
                 "relevance": 0.88,
                 "why_relevant": "Brave web search",
             }
+        ],
+        "digg": [
+            {
+                "id": "mock1abc",
+                "title": f"Digg cluster about {subquery.search_query}",
+                "url": "https://di.gg/ai/mock1abc",
+                "tldr": f"Curated cluster summarizing recent {subquery.search_query} discussion across the AI 1000.",
+                "author": "",
+                "date": dates.get_date_range(3)[0],
+                "engagement": {"postCount": 8, "uniqueAuthors": 5, "rank": 2, "rank_score": 49.0},
+                "first_post_age": "3d",
+                "posts": [
+                    {
+                        "username": "exampledev",
+                        "display_name": "Example Dev",
+                        "category": "Engineer",
+                        "rank": 142,
+                        "body": f"Quote from the AI 1000 about {subquery.search_query}.",
+                        "post_type": "tweet",
+                        "x_url": "https://x.com/exampledev/status/1",
+                        "posted_at": dates.get_date_range(3)[0],
+                    },
+                ],
+                "relevance": 0.84,
+                "why_relevant": "Mock Digg cluster",
+            },
+            {
+                "id": "mock2def",
+                "title": f"Second Digg cluster on {subquery.search_query}",
+                "url": "https://di.gg/ai/mock2def",
+                "tldr": f"Another angle on {subquery.search_query}.",
+                "author": "",
+                "date": dates.get_date_range(8)[0],
+                "engagement": {"postCount": 3, "uniqueAuthors": 2, "rank": 18, "rank_score": 33.0},
+                "first_post_age": "8d",
+                "posts": [],
+                "relevance": 0.71,
+                "why_relevant": "Mock Digg cluster",
+            },
         ],
     }
     if source == "grounding":

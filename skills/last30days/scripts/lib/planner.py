@@ -19,14 +19,14 @@ ALLOWED_INTENTS = {
 }
 ALLOWED_CLUSTER_MODES = {"none", "story", "workflow", "market", "debate"}
 QUICK_SOURCE_PRIORITY = {
-    "factual": ["hackernews", "reddit", "x", "youtube"],
-    "product": ["youtube", "reddit", "x", "tiktok"],
-    "concept": ["hackernews", "reddit", "x", "youtube"],
-    "opinion": ["reddit", "x", "youtube", "hackernews"],
-    "how_to": ["youtube", "reddit", "x", "hackernews"],
-    "comparison": ["reddit", "x", "hackernews", "youtube"],
-    "breaking_news": ["x", "reddit", "hackernews", "youtube", "polymarket"],
-    "prediction": ["polymarket", "x", "hackernews", "reddit", "youtube"],
+    "factual": ["hackernews", "reddit", "x", "xquik", "youtube"],
+    "product": ["youtube", "reddit", "x", "xquik", "tiktok"],
+    "concept": ["hackernews", "reddit", "x", "xquik", "youtube"],
+    "opinion": ["reddit", "x", "xquik", "youtube", "hackernews"],
+    "how_to": ["youtube", "reddit", "x", "xquik", "hackernews"],
+    "comparison": ["reddit", "x", "xquik", "hackernews", "youtube"],
+    "breaking_news": ["x", "xquik", "reddit", "hackernews", "youtube", "polymarket"],
+    "prediction": ["polymarket", "x", "xquik", "hackernews", "reddit", "youtube"],
 }
 SOURCE_PRIORITY = {
     "factual": ["hackernews", "reddit", "x", "youtube"],
@@ -60,6 +60,7 @@ INTENT_SOURCE_EXCLUSIONS: dict[str, set[str]] = {
 SOURCE_CAPABILITIES = {
     "reddit": {"discussion", "social"},
     "x": {"discussion", "social"},
+    "xquik": {"discussion", "social"},
     "youtube": {"video", "video_longform", "discussion"},
     "tiktok": {"video", "video_shortform", "social"},
     "instagram": {"video", "video_shortform", "social"},
@@ -67,6 +68,7 @@ SOURCE_CAPABILITIES = {
     "bluesky": {"discussion", "social"},
     "truthsocial": {"discussion", "social"},
     "polymarket": {"market"},
+    "digg": {"discussion", "social", "link"},
     "xiaohongshu": {"video", "video_shortform", "social"},
     "github": {"discussion", "link"},
     "grounding": {"web", "reference", "link"},
@@ -272,7 +274,15 @@ def _sanitize_plan(
         freshness_mode=freshness_mode,
         cluster_mode=cluster_mode,
         raw_topic=topic,
-        subqueries=_normalize_subquery_weights(_trim_subqueries_for_depth(subqueries, intent, depth, eligible_sources)),
+        subqueries=_normalize_subquery_weights(
+            _trim_subqueries_for_depth(
+                subqueries,
+                intent,
+                depth,
+                eligible_sources,
+                requested_sources=requested_sources,
+            )
+        ),
         source_weights=source_weights,
         notes=[str(note).strip() for note in raw.get("notes") or [] if str(note).strip()],
     )
@@ -305,6 +315,7 @@ def _trim_subqueries_for_depth(
     intent: str,
     depth: str,
     available_sources: list[str],
+    requested_sources: list[str] | None = None,
 ) -> list[schema.SubQuery]:
     # At non-quick depth, expand sources: use capability routing for intents
     # that define it, or all available sources otherwise. The LLM planner may
@@ -334,6 +345,15 @@ def _trim_subqueries_for_depth(
     for subquery in subqueries:
         if depth in {"quick", "default"}:
             preferred_sources = ranked_sources[:limit]
+            if requested_sources:
+                requested = [
+                    source
+                    for source in requested_sources
+                    if source in available_sources and source in subquery.sources
+                ]
+                for source in requested:
+                    if source not in preferred_sources:
+                        preferred_sources.append(source)
         else:
             preferred_sources = [source for source in ranked_sources if source in subquery.sources][:limit]
             if len(preferred_sources) < limit:
@@ -426,7 +446,13 @@ def _fallback_plan(
         cluster_mode=_default_cluster_mode(intent),
         raw_topic=topic,
         subqueries=_normalize_subquery_weights(
-            _trim_subqueries_for_depth(subqueries[:_max_subqueries(intent, topic)], intent, depth, list(source_weights))
+            _trim_subqueries_for_depth(
+                subqueries[:_max_subqueries(intent, topic)],
+                intent,
+                depth,
+                list(source_weights),
+                requested_sources=requested_sources,
+            )
         ),
         source_weights=_normalize_weights(source_weights),
         notes=[note],
